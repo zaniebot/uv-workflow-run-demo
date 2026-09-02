@@ -24,3 +24,5 @@ within its merge-ref scope; the `workflow_run` save should be denied by GitHub.
 Use the pull request's `integration tests` check to reach the meta job and its summary of individual
 integration results. The demo runs the build and integration suites; the remaining uv workflows are
 omitted. Registry tests retain their existing restriction to `astral-sh/uv`.
+
+This pull request exercises the build-to-integration handoff without changing uv source.
