@@ -42,23 +42,37 @@ entries were invisible to `main` and sibling branches.
 
 ## Consequences for uv
 
-A viable next design keeps the build producer on `main` and dispatches test consumers on a
-dedicated, non-default worker branch. The worker branch contains reviewed workflow definitions; the
-selected uv commit and producing run ID are inputs, rather than permission to replace the worker's
-workflow definition. Tests can continue to download binaries from the exact producing run and check
-out the matching commit. The worker token stays at `contents: read` and `actions: read`, with no app
-credential or inherited secrets.
+`astral-sh/uv-dev` already provides the preferable worker location. Its protected `main` is a mirror
+of `astral-sh/uv/main`, updated by the existing
+[sync workflow](https://github.com/astral-sh/uv/blob/2b2545c882841676fe0fecf0f3f0f5a08565d123/.github/workflows/sync-uv-dev.yml).
+At the inspected revision, both refs pointed to `2b2545c882841676fe0fecf0f3f0f5a08565d123`. The
+[existing uv-dev CI run](https://github.com/astral-sh/uv-dev/actions/runs/33674808578) completed
+successfully and produced its own development-binary artifacts. Matching `main` cache keys had
+different cache-entry IDs in the two repositories. No additional mirror branch is needed.
 
-This protects the trusted branch's cache while still allowing writes in the worker branch's own
-scope. A separate worker repository would isolate that scope further, at the cost of a cross-repo
-artifact handoff and reporting. The live evidence above covers the branch design; no cross-repo
-experiment was needed to establish that boundary.
+For main-branch commits, use the existing mirror CI: `uv/main` advances, the sync updates
+`uv-dev/main`, CI builds and tests that exact commit in `uv-dev`, and the app publishes the selected
+job results on the same SHA in `uv`. The cache boundary is the executing repository. Merely calling
+a reusable workflow in `uv-dev` from an `uv` workflow would retain the caller's execution context
+and would not provide that separation.
 
-The reporting tradeoff remains: a dispatch on the worker branch has a native, nested `CI` run, but
-app copies on the tested source commit are flat. If GitHub enables and enforces `cache-mode` for uv,
-the existing jobs could instead declare their cache authority directly and retain the current native
-reporting. Neither design changes the separate question of build scripts executing in the trusted
-producer.
+For upstream PRs, a later consumer can be dispatched on protected `uv-dev/main` with an explicit
+source repository, producing run ID, attempt, and tested SHA. It must use reviewed workflow
+definitions and an authenticated, read-only artifact handoff. The tested revision is input data; it
+does not replace the workflow definition. The app must validate both repository IDs and write checks
+only in the source repository. Test jobs receive no upstream write credential or app key.
+
+`uv-dev` also has trusted automation, so its cache must not become an indirect path back into
+upstream writes. For example, the existing
+[rebase workflow](https://github.com/astral-sh/uv/blob/2b2545c882841676fe0fecf0f3f0f5a08565d123/.github/workflows/rebase-conflicted-pull-request.yml)
+restores a Rust cache in its preparation job and passes a bundle to a separately credentialed push
+job. Review these consumers and handoffs before broadening which untrusted code runs in
+`uv-dev/main`. This is a remaining deployment requirement, not a confirmed exploit in that workflow.
+
+The native `uv-dev` CI run retains its existing nested job tree; app copies on an upstream commit
+remain flat. The dedicated non-default branch remains a fallback if a more isolated worker scope is
+needed. `cache-mode` is not available for this design. Neither repository nor branch separation
+changes the separate question of build scripts executing in the trusted producer.
 
 References:
 [GitHub's proposed explicit cache mode](https://github.com/orgs/community/discussions/194493),
