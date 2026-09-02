@@ -1,22 +1,67 @@
 name: CI
+run-name: CI for Build ${{ github.event.workflow_run.id }}, attempt ${{ github.event.workflow_run.run_attempt }}
 
-on:
-  pull_request:
-  workflow_dispatch:
+on: # zizmor: ignore[dangerous-triggers]
+  workflow_run:
+    workflows: [Build]
+    types: [completed]
 
+# Cache access depends on the triggering cascade; workflow_run alone did not
+# prevent main-scope writes after a push in this demo. Reporter credentials stay
+# outside the test runners.
 permissions:
+  actions: read
   contents: read
 
 concurrency:
-  group: ci-${{ github.ref }}
-  cancel-in-progress: true
+  group: ci-${{ github.event.workflow_run.id }}-${{ github.event.workflow_run.run_attempt }}
+  cancel-in-progress: false
 
 jobs:
-  build-dev-binaries:
-    uses: $/.github/workflows/build-dev-binaries.yml
+  prepare:
+    if: ${{ github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.path == '.github/workflows/build.yml' && github.event.workflow_run.head_repository.id == github.event.repository.id && (github.event.workflow_run.event == 'pull_request' || github.event.workflow_run.event == 'workflow_dispatch' || (github.event.workflow_run.event == 'push' && github.event.workflow_run.head_branch == 'main')) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      sha: ${{ steps.artifacts.outputs.sha }}
+    steps:
+      - name: Identify the built commit
+        id: artifacts
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_RUN_ID: ${{ github.event.workflow_run.id }}
+        run: |
+          # Pull request builds use a merge SHA, which differs from head_sha.
+          # Match scripts and binaries using the producing run's artifact names.
+          sha=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$SOURCE_RUN_ID/artifacts?per_page=100" --paginate --slurp |
+            jq -er '[.[].artifacts[] | select(.expired == false) | .name | select(test("^uv-linux-libc-[0-9a-f]{40}$")) | ltrimstr("uv-linux-libc-")] | unique | if length == 1 then .[0] else error("Expected one built commit") end')
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+          # Markdown backticks are literal.
+          # shellcheck disable=SC2016
+          printf 'Built commit: `%s`\n\n[Source build](%s/%s/actions/runs/%s)\n' "$sha" "$GITHUB_SERVER_URL" "$GITHUB_REPOSITORY" "$SOURCE_RUN_ID" >> "$GITHUB_STEP_SUMMARY"
+
+  test-integration:
+    needs: prepare
+    uses: $/.github/workflows/test-integration.yml
+    with:
+      sha: ${{ needs.prepare.outputs.sha }}
+      run-id: ${{ github.event.workflow_run.id }}
+
+  test-smoke:
+    needs: prepare
+    uses: $/.github/workflows/test-smoke.yml
+    with:
+      sha: ${{ needs.prepare.outputs.sha }}
+      run-id: ${{ github.event.workflow_run.id }}
+
+  test-reporting:
+    needs: prepare
+    uses: $/.github/workflows/test-reporting.yml
 
   cache-access:
-    name: Cache access in the source run
+    name: Cache access after workflow_run
+    needs: prepare
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -26,57 +71,3 @@ jobs:
         with:
           path: ${{ runner.temp }}/cache-access-marker
           key: workflow-run-demo-${{ github.event_name }}-${{ github.run_id }}-${{ github.run_attempt }}
-
-  test-integration:
-    name: integration tests
-    needs: build-dev-binaries
-    runs-on: ubuntu-latest
-    timeout-minutes: 35
-    permissions:
-      actions: read
-    steps:
-      - name: Wait for integration tests
-        shell: bash
-        env:
-          GH_TOKEN: ${{ github.token }}
-          INTEGRATION_RUN_NAME: Integration tests for CI ${{ github.run_id }}, attempt ${{ github.run_attempt }}
-        run: |
-          # The consumer waits for this job to start before downloading binaries.
-          # Correlate the two workflows by run ID and attempt, not a moving branch.
-          started_at=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/attempts/$GITHUB_RUN_ATTEMPT" --jq .run_started_at)
-          deadline=$((SECONDS + 1800))
-          run_id=
-          while (( SECONDS < deadline )); do
-            if [[ -z "$run_id" ]]; then
-              run_id=$(gh api --method GET "repos/$GITHUB_REPOSITORY/actions/workflows/test-integration-workflow-run.yml/runs" \
-                -f event=workflow_run -f "created=>=$started_at" -f per_page=100 --paginate --slurp | \
-                jq -r '[.[].workflow_runs[] | select(.display_title == env.INTEGRATION_RUN_NAME) | .id] | min // empty')
-              if [[ -z "$run_id" ]]; then
-                sleep 30
-                continue
-              fi
-              run_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$run_id"
-              printf 'Integration tests: [workflow run](%s).\n\n' "$run_url" >> "$GITHUB_STEP_SUMMARY"
-              echo "Waiting for $run_url"
-            fi
-
-            run=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$run_id")
-            if [[ $(jq -r .status <<< "$run") != completed ]]; then
-              sleep 30
-              continue
-            fi
-
-            attempt=$(jq -r .run_attempt <<< "$run")
-            jobs=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$run_id/attempts/$attempt/jobs?per_page=100" --paginate --slurp)
-            printf '| Job | Result |\n| --- | --- |\n' >> "$GITHUB_STEP_SUMMARY"
-            jq -r '.[].jobs[] | "| [\(.name)](\(.html_url)) | \(.conclusion) |"' <<< "$jobs" >> "$GITHUB_STEP_SUMMARY"
-
-            if [[ $(jq -r .conclusion <<< "$run") == success ]] && \
-              jq -e '[.[].jobs[] | select(.name | startswith("test-integration /"))] | any(.conclusion == "success") and all(.conclusion == "success" or .conclusion == "skipped")' <<< "$jobs" > /dev/null; then
-              exit 0
-            fi
-            echo '::error::Integration tests did not pass. See the job summary for individual results and logs.'
-            exit 1
-          done
-          echo '::error::Timed out waiting for the integration workflow. Check that the workflow_run listener is enabled on the default branch.'
-          exit 1
