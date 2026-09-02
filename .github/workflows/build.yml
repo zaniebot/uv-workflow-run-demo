@@ -1,8 +1,10 @@
 name: Build
 
 on:
+  push:
+    branches: [main]
   pull_request:
-    branches: [shared-ci-app-reporting]
+    branches: [main, shared-ci-app-reporting]
   workflow_dispatch:
 
 permissions:
