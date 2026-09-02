@@ -1,15 +1,12 @@
 name: Integration tests
 
 on: # zizmor: ignore[dangerous-triggers]
-  # GitHub only activates this listener once it is on the default branch.
+  # The disposable repository accepts its own PRs to demonstrate the UI before
+  # landing the main-push-only workflow in uv. It contains no registry credentials.
   workflow_run:
     workflows: [CI]
     types: [completed]
-    branches: [main]
 
-# GitHub grants `workflow_run` read-only access to the default branch's cache.
-# These permissions govern the separate GITHUB_TOKEN used to download artifacts.
-# https://docs.github.com/en/actions/reference/workflows-and-actions/dependency-caching#cache-access-for-low-trust-workflow-triggers
 permissions:
   actions: read
   contents: read
@@ -19,12 +16,43 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  prepare:
+    if: ${{ contains(fromJSON('["pull_request", "workflow_dispatch"]'), github.event.workflow_run.event) && github.event.workflow_run.path == '.github/workflows/ci.yml' && github.event.workflow_run.head_repository.id == github.event.repository.id && github.event.workflow_run.conclusion == 'success' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      sha: ${{ steps.source.outputs.sha }}
+    steps:
+      - name: Find the commit used for the source run's binaries
+        id: source
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_RUN_ID: ${{ github.event.workflow_run.id }}
+          SOURCE_RUN_URL: ${{ github.event.workflow_run.html_url }}
+        run: |
+          # On PRs, the artifact suffix is the merge SHA; head_sha is the PR head.
+          sha=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$SOURCE_RUN_ID/artifacts?per_page=100" \
+            --jq '[.artifacts[] | select(.expired == false and (.name | test("^uv-linux-libc-[0-9a-f]{40}$"))) | .name | ltrimstr("uv-linux-libc-")] | unique | if length == 1 then .[0] else error("Expected one binary commit") end')
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+          printf 'Source: [CI run %s](%s), commit `%s`.\n' "$SOURCE_RUN_ID" "$SOURCE_RUN_URL" "$sha" >> "$GITHUB_STEP_SUMMARY"
+
   test-integration:
-    # Restrict credentialed tests to the upstream repository's main-branch pushes.
-    # A PR can also have a branch named main, so the branch filter is insufficient.
-    if: ${{ github.event.workflow_run.event == 'push' && github.event.workflow_run.path == '.github/workflows/ci.yml' && github.event.workflow_run.head_repository.id == github.event.repository.id && github.event.workflow_run.conclusion == 'success' }}
+    needs: prepare
     uses: $/.github/workflows/test-integration.yml
-    secrets: inherit
     with:
-      sha: ${{ github.event.workflow_run.head_sha }}
+      sha: ${{ needs.prepare.outputs.sha }}
       run-id: ${{ github.event.workflow_run.id }}
+
+  cache-access:
+    name: Cache access after workflow_run
+    needs: prepare
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Create harmless cache marker
+        run: echo demo > "$RUNNER_TEMP/cache-access-marker"
+      # GitHub should reject this save while leaving the job successful.
+      - uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: ${{ runner.temp }}/cache-access-marker
+          key: workflow-run-demo-${{ github.event_name }}-${{ github.run_id }}-${{ github.run_attempt }}
