@@ -1,11 +1,12 @@
 name: Integration tests
+run-name: Integration tests for CI ${{ github.event.workflow_run.id }}, attempt ${{ github.event.workflow_run.run_attempt }}
 
 on: # zizmor: ignore[dangerous-triggers]
   # The disposable repository accepts its own PRs to demonstrate the UI before
   # landing the main-push-only workflow in uv. It contains no registry credentials.
   workflow_run:
     workflows: [CI]
-    types: [completed]
+    types: [in_progress]
 
 permissions:
   actions: read
@@ -17,12 +18,40 @@ concurrency:
 
 jobs:
   prepare:
-    if: ${{ contains(fromJSON('["pull_request", "workflow_dispatch"]'), github.event.workflow_run.event) && github.event.workflow_run.path == '.github/workflows/ci.yml' && github.event.workflow_run.head_repository.id == github.event.repository.id && github.event.workflow_run.conclusion == 'success' }}
+    if: ${{ contains(fromJSON('["pull_request", "workflow_dispatch"]'), github.event.workflow_run.event) && github.event.workflow_run.path == '.github/workflows/ci.yml' && github.event.workflow_run.head_repository.id == github.event.repository.id }}
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 40
     outputs:
       sha: ${{ steps.source.outputs.sha }}
     steps:
+      - name: Wait for binary builds
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_RUN_ID: ${{ github.event.workflow_run.id }}
+          SOURCE_RUN_ATTEMPT: ${{ github.event.workflow_run.run_attempt }}
+        run: |
+          # CI's meta job starts only after all binary builds succeed. Waiting for
+          # that job to start avoids waiting for CI itself, which waits for us.
+          deadline=$((SECONDS + 2100))
+          while (( SECONDS < deadline )); do
+            source_run=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$SOURCE_RUN_ID")
+            if [[ $(jq -r .run_attempt <<< "$source_run") != "$SOURCE_RUN_ATTEMPT" || $(jq -r .status <<< "$source_run") == completed ]]; then
+              echo '::error::The producing CI attempt ended before integration tests were ready.'
+              exit 1
+            fi
+            jobs=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$SOURCE_RUN_ID/attempts/$SOURCE_RUN_ATTEMPT/jobs?per_page=100" --paginate --slurp)
+            status=$(jq -r '[.[].jobs[] | select(.name == "integration tests") | .status] | if length == 1 then .[0] elif length == 0 then empty else error("Multiple CI meta jobs matched") end' <<< "$jobs")
+            if [[ "$status" == in_progress ]]; then
+              exit 0
+            elif [[ "$status" == completed ]]; then
+              echo '::error::The CI meta job ended before integration tests were ready.'
+              exit 1
+            fi
+            sleep 30
+          done
+          echo '::error::Timed out waiting for CI to finish building the binaries.'
+          exit 1
+
       - name: Find the commit used for the source run's binaries
         id: source
         env:
