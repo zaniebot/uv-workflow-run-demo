@@ -1,0 +1,75 @@
+name: Inspect the Actions cache boundary
+description: Inspect only non-secret cache claims and use uniquely named harmless markers
+
+inputs:
+  restore-key:
+    description: Exact key of an earlier marker to look up
+    default: ""
+  save:
+    description: Whether to attempt to save a fresh marker
+    default: "true"
+
+outputs:
+  cache-key:
+    description: Unique key used for this run's marker
+    value: ${{ steps.context.outputs.key }}
+  restore-hit:
+    description: Whether the requested marker was found
+    value: ${{ steps.restore.outputs.cache-hit }}
+
+runs:
+  using: composite
+  steps:
+    - name: Inspect cache claims without exposing credentials
+      id: context
+      uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
+      with:
+        script: |
+          let scopes;
+          try {
+            const token = process.env.ACTIONS_RUNTIME_TOKEN;
+            const claims = JSON.parse(Buffer.from(token.split('.')[1], 'base64url').toString('utf8'));
+            const access = typeof claims.ac === 'string' ? JSON.parse(claims.ac) : claims.ac;
+            if (!Array.isArray(access)) throw new Error();
+            scopes = access.map(({Scope, Permission}) => ({Scope, Permission}));
+          } catch {
+            throw new Error('Could not read cache access claims');
+          }
+          const key = `cache-boundary-${process.env.GITHUB_RUN_ID}-${process.env.GITHUB_RUN_ATTEMPT}-${process.env.GITHUB_JOB}`;
+          core.setOutput('key', key);
+          const evidence = {
+            ref: process.env.GITHUB_REF,
+            event: process.env.GITHUB_EVENT_NAME,
+            effective_mode: process.env.ACTIONS_CACHE_MODE ?? null,
+            cache_scopes: scopes,
+            marker_key: key,
+          };
+          core.info(JSON.stringify(evidence));
+          await core.summary.addHeading('Cache boundary').addCodeBlock(JSON.stringify(evidence, null, 2), 'json').write();
+    - name: Look up the requested marker
+      id: restore
+      if: ${{ inputs.restore-key != '' }}
+      uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+      with:
+        path: ${{ runner.temp }}/cache-boundary-marker
+        key: ${{ inputs.restore-key }}
+        lookup-only: true
+    - name: Create a harmless marker
+      if: ${{ inputs.save == 'true' }}
+      shell: bash
+      run: printf 'cache-boundary\n' > "$RUNNER_TEMP/cache-boundary-marker"
+    # This pinned client predates cache-mode, so it attempts the operation and
+    # lets the cache service enforce the runtime token's permissions.
+    - name: Attempt to save the marker
+      if: ${{ inputs.save == 'true' }}
+      uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+      with:
+        path: ${{ runner.temp }}/cache-boundary-marker
+        key: ${{ steps.context.outputs.key }}
+    - name: Record the lookup result
+      if: ${{ inputs.restore-key != '' }}
+      shell: bash
+      env:
+        RESTORE_KEY: ${{ inputs.restore-key }}
+        RESTORE_HIT: ${{ steps.restore.outputs.cache-hit }}
+      run: printf '\nRequested key %s; exact hit %s\n' "$RESTORE_KEY" "${RESTORE_HIT:-false}" >> "$GITHUB_STEP_SUMMARY"

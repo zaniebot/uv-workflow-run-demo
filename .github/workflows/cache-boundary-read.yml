@@ -1,0 +1,25 @@
+name: Cache boundary (read)
+run-name: Cache boundary read on ${{ github.ref_name }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      restore-key:
+        description: Exact key of an earlier marker to look up
+        type: string
+
+permissions:
+  contents: read
+cache-mode: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/cache-boundary
+        with:
+          restore-key: ${{ inputs.restore-key }}
