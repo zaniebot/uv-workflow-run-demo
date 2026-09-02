@@ -6,8 +6,9 @@ on: # zizmor: ignore[dangerous-triggers]
     workflows: [Build]
     types: [completed]
 
-# GitHub grants workflow_run jobs read-only cache access. The app reports these
-# jobs on the source commit; no reporter credentials are passed to test runners.
+# Cache access depends on the triggering cascade; workflow_run alone did not
+# prevent main-scope writes after a push in this demo. Reporter credentials stay
+# outside the test runners.
 permissions:
   actions: read
   contents: read
