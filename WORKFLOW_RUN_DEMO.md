@@ -8,7 +8,8 @@ with a plain placeholder. Free runners and longer timeouts are separate commits,
 
 **This is a reporting prototype, not a working cache-isolation solution for `main`.** The PR cascade
 received read-only cache access, but the push cascade successfully wrote a cache in
-`refs/heads/main`. The execution boundary for main-branch tests remains unresolved.
+`refs/heads/main`. The [cache boundary experiment](CACHE_BOUNDARY.md) records the working branch
+scope boundary and the status of GitHub's proposed explicit cache modes.
 
 A PR or a push to `main` starts `Build`, which builds the real development binaries. When it
 completes, GitHub starts one `CI` workflow through `workflow_run`. That workflow contains all the
