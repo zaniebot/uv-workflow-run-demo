@@ -1,0 +1,22 @@
+# A disposable UI fixture, not a uv regression test.
+on:
+  workflow_call:
+
+permissions: {}
+
+jobs:
+  failure-and-rerun:
+    name: failure and rerun
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Demonstrate a failed check and a successful rerun
+        shell: bash
+        env:
+          ATTEMPT: ${{ github.run_attempt }}
+        run: |
+          if [[ "$ATTEMPT" == 1 ]]; then
+            echo '::error::Intentional reporting demo failure. Rerun this job to make it pass.'
+            exit 1
+          fi
+          echo 'The reporting demo rerun passed.'

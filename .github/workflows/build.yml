@@ -1,0 +1,29 @@
+name: Build
+
+on:
+  pull_request:
+    branches: [shared-ci-app-reporting]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-dev-binaries:
+    uses: $/.github/workflows/build-dev-binaries.yml
+
+  cache-access:
+    name: Cache access in the source run
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Create harmless cache marker
+        run: echo demo > "$RUNNER_TEMP/cache-access-marker"
+      - uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: ${{ runner.temp }}/cache-access-marker
+          key: workflow-run-demo-${{ github.event_name }}-${{ github.run_id }}-${{ github.run_attempt }}
