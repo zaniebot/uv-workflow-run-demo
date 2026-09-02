@@ -22,7 +22,7 @@ env:
 
 jobs:
   ruff:
-    timeout-minutes: 10
+    timeout-minutes: 20
     runs-on: ubuntu-slim
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -35,7 +35,7 @@ jobs:
       - run: uv run --only-group check ruff check .
 
   ty:
-    timeout-minutes: 10
+    timeout-minutes: 20
     runs-on: ubuntu-slim
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -61,7 +61,7 @@ jobs:
           done
 
   shellcheck:
-    timeout-minutes: 10
+    timeout-minutes: 20
     runs-on: ubuntu-slim
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -77,7 +77,7 @@ jobs:
         run: find . -name '*.sh' -type f | xargs shellcheck --shell bash --severity style
 
   validate-pyproject:
-    timeout-minutes: 10
+    timeout-minutes: 20
     runs-on: ubuntu-slim
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -91,7 +91,7 @@ jobs:
         run: ./scripts/validate-pyproject.sh
 
   readme:
-    timeout-minutes: 10
+    timeout-minutes: 20
     runs-on: ubuntu-slim
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -104,7 +104,7 @@ jobs:
 
   clippy-ubuntu:
     name: "clippy on linux"
-    timeout-minutes: 10
+    timeout-minutes: 20
     if: ${{ inputs.code-changed == 'true' || github.ref == 'refs/heads/main' }}
     runs-on: ubuntu-latest
     steps:
@@ -126,9 +126,9 @@ jobs:
 
   clippy-windows:
     name: "clippy on windows"
-    timeout-minutes: 15
+    timeout-minutes: 30
     if: ${{ inputs.code-changed == 'true' || github.ref == 'refs/heads/main' }}
-    runs-on: namespace-profile-windows-2022-x86-64-4
+    runs-on: windows-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -155,7 +155,7 @@ jobs:
         run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
 
   hawk:
-    timeout-minutes: 15
+    timeout-minutes: 30
     if: ${{ inputs.code-changed == 'true' || github.ref == 'refs/heads/main' }}
     runs-on: ubuntu-latest
     steps:
@@ -178,7 +178,7 @@ jobs:
 
   shear:
     name: "cargo shear"
-    timeout-minutes: 10
+    timeout-minutes: 20
     # NOTE: `cargo shear` needs `cargo metadata`, so we don't use `ubuntu-slim` here
     # as it doesn't include the Rust toolchain.
     runs-on: ubuntu-latest

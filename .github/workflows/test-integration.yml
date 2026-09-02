@@ -200,7 +200,7 @@ jobs:
   integration-test-linux-armv7-on-aarch64:
     name: "armv7 on aarch64 linux"
     timeout-minutes: 20
-    runs-on: github-ubuntu-24.04-aarch64-4
+    runs-on: ubuntu-24.04-arm
     env:
       UV_PYTHON_INSTALL_DIR: ${{ github.workspace }}/.python
 
